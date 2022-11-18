@@ -8,9 +8,10 @@
   Класс, описывающий обмотку катушечного типа.
 """
 
+from typing import Optional, Tuple, Union, Dict
+
 from common.armatureInsulation import *
 from common.wireTypes import *
-from typing import Optional, Union, Dict
 
 
 class CoilArmature:
@@ -65,12 +66,12 @@ class CoilArmature:
 
       Длина витка, мм. В момент инициализации равна ``None``.
 
-    * ``resistance: Optional[float]``
+    * ``resistance: Optional[Dict[int, float]]``
 
       Сопротивление обмотки постоянному току, Ом. Рассчитывается для температур 15, 75, 105 и 120 градусов Цельсия. В
       момент инициализации равно ``None``.
 
-    * ``current_density: Optional[Dict[int, float]]``
+    * ``current_density: Optional[float]``
 
       Плотность тока в обмотке, А/мм². В момент инициализации равна ``None``.
 
@@ -106,6 +107,10 @@ class CoilArmature:
 
       Рассчитывает плотность тока в обмотке.
 
+    * ``get_auxiliary_dimensions(wedge_height: float, slit_height: float) -> Tuple[float, float, float]``
+
+      Возвращает вспомогательные размеры обмотки для расчёта индуктивных сопротивлений.
+
     Реализует паттерн «Одиночка», поскольку статор не может иметь более одной обмотки.
     """
 
@@ -121,7 +126,8 @@ class CoilArmature:
                  "shortening",
                  "turn_length",
                  "resistance",
-                 "current_density"]
+                 "current_density"
+                 ]
 
     __instance = None
 
@@ -223,8 +229,8 @@ class CoilArmature:
         self.turn_count = (pole_pairs * effective_wires * slots_per_pole_phase) / self.parallel_branches
 
         # Ну и тип заодно приведём. Как минимум для вывода результатов потом удобно будет
-        if self.turn_count == (int_count := int(self.turn_count)):
-            self.turn_count = int_count
+        if self.turn_count.is_integer():
+            self.turn_count = int(self.turn_count)
 
     def compute_turn_length(self,
                             stator_length: float,
@@ -268,3 +274,31 @@ class CoilArmature:
         """
 
         self.current_density = current / self.parallel_branches / (self.rows * self.columns * self.wire.wire_section)
+
+    def get_auxiliary_dimensions(self,
+                                 wedge_height: float,
+                                 slit_height: float
+                                 ) -> Tuple[float, float, float]:
+        """
+        Метод, возвращающий вспомогательные размеры обмотки
+
+        :param wedge_height: Высота клина, мм.
+        :param slit_height: Высота шлица, мм.
+        :return: Высота меди с изоляцией между катушками, мм; расстояние от расточки до меди, мм; толщина изоляции между
+        медью, мм.
+        """
+
+        coil_insulation = self.insulation_system.all_insulation()[0]
+
+        copper_height = 2 * self.coil_height - self.wire.insulation_height - coil_insulation +\
+            self.insulation_system.coil_filling
+
+        distance_to_air = slit_height + wedge_height + self.insulation_system.wedge_filling +\
+            (self.wire.insulation_height + coil_insulation) / 2
+
+        insulation_thickness = self.wire.insulation_height + coil_insulation + self.insulation_system.coil_filling
+
+        return copper_height, distance_to_air, insulation_thickness
+
+
+__all__ = "CoilArmature"
