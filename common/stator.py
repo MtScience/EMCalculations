@@ -8,10 +8,10 @@
   Класс, описывающий статор машины переменного тока.
 """
 
-from common.statorArmature import *
-from common.steelDatabase import *
-from typing import Optional, Union, Tuple, Dict
 import math
+from typing import Optional, Tuple, Union
+
+from common.statorArmature import *
 
 
 class ACMachineStator:
@@ -59,11 +59,6 @@ class ACMachineStator:
     * ``armature: CoilArmature``
 
       Статорная обмотка. Является объектом соответствующего типа.
-
-    * ``steel: Dict[str, Steel]``
-
-      Тип стали сердечника. Словарь, содержащий ключи ``along`` и ``across``, соответствующие объектам типа ``Steel``,
-      описывающим характеристики намагничивания стали соответственно вдоль и поперёк проката.
 
     * ``vent_channel_count: Optional[int]``
 
@@ -123,17 +118,25 @@ class ACMachineStator:
 
       Вычисляет зубцовое деление.
 
+    * ``compute_effective_length(fill_factor: float) -> None``
+
+      Вычисляет эффективную длину сердечника статора, мм.
+
     * ``compute_current_load(current: float) -> None``
 
       Вычисляет линейную токовую нагрузку якоря.
+
+    * ``get_heat_load(self) -> float``
+
+      Возвращает произведение линейной токовой нагрузки на плотность тока в обмотке (тепловую нагрузку), А²/см∙мм².
 
     * ``get_stamp_slot_dimensions(assembly_allowance: float, stamp_allowance: float) -> Tuple[float, float]``
 
       Возвращает глубину и ширину паза в штампе, мм.
 
-    * ``get_heat_load(self) -> float``
+    * ``get_armature_coefficient() -> float``
 
-      Возвращает произведение линейной токовой нагрузки на плотность тока в обмотке (тепловую нагрузку), А²/см∙мм²
+      Возвращает обмоточный коэффициент статора.
 
     * ``get_diameter_third() -> float``
 
@@ -150,10 +153,6 @@ class ACMachineStator:
     * ``get_tooth_pitch_bottom() -> float``
 
       Возвращает зубцовое деление статора на уровне дна паза, мм.
-
-    * ``get_effective_length(fill_factor: float) -> float``
-
-      Возвращает эффективную длину сердечника статора, мм.
 
     * ``get_yoke_height() -> float``
 
@@ -178,11 +177,14 @@ class ACMachineStator:
     * ``get_flow_branching_factor(effective_length: float) -> float``
 
       Возвращает коэффициент ответвления магнитного потока в пазы статора.
+
+    Реализует паттерн «Одиночка».
     """
 
     __slots__ = ["outer_diameter",
                  "inner_diameter",
                  "length",
+                 "effective_length",
                  "slot_count",
                  "slot_height",
                  "slot_width",
@@ -190,7 +192,6 @@ class ACMachineStator:
                  "wedge_height",
                  "effective_wires",
                  "armature",
-                 "steel",
                  "vent_channel_count",
                  "vent_channel_width",
                  "stud_count",
@@ -224,7 +225,6 @@ class ACMachineStator:
                  effective_wires: int,
                  armature: CoilArmature,  # Вообще-то тут должен стоять более общий тип, но его тут не появится, пока я
                  # не научусь считать стержневую обмотку
-                 steel: Dict[str, Steel],
                  vent_channel_count: Optional[int] = None,
                  vent_channel_width: Optional[float] = None,
                  stud_count: Optional[int] = None,
@@ -236,6 +236,7 @@ class ACMachineStator:
         self.outer_diameter = outer_diameter  # Внешний диаметр
         self.inner_diameter = inner_diameter  # Внутренний диаметр
         self.length = length  # Длина сердечника
+        self.effective_length: Optional[float] = None  # Эффективная длина сердечника
 
         self.slot_count = slot_count  # Число пазов
         self.slot_height = slot_height  # Высота паза
@@ -244,8 +245,6 @@ class ACMachineStator:
         self.wedge_height = wedge_height  # Высота клина
         self.effective_wires = effective_wires  # Число эффективных проводников в пазу
         self.armature = armature  # Обмотка
-
-        self.steel = steel  # Сталь статора. Установлено сюда предварительно, возможно, позже будет перенесено
 
         self.vent_channel_count = vent_channel_count  # Число вентиляционных каналов статора
         self.vent_channel_width = vent_channel_width  # Их ширина
@@ -295,8 +294,27 @@ class ACMachineStator:
 
         self.tooth_pitch = math.pi * self.inner_diameter / self.slot_count
 
+    def compute_effective_length(self,
+                                 fill_factor: float  # А может прикрутить значение по умолчанию?
+                                 ) -> None:
+        """
+        Метод, рассчитывающий эффективную длину статора с учётом вентиляционных каналов и шунтов (суммарную длину чистой
+        стали).
+
+        :param fill_factor: Коэффициент заполнения статора сталью.
+        """
+
+        length = self.length
+        if self.bypass_thickness is not None:
+            length -= 2 * self.bypass_thickness
+        if self.vent_channel_count is not None:
+            length -= self.vent_channel_width * self.vent_channel_count
+
+        self.effective_length = length * fill_factor
+
     def compute_current_load(self,
-                             current: float) -> None:
+                             current: float
+                             ) -> None:
         """
         Метод, рассчитывающий линейную токовую нагрузку статора.
 
@@ -320,6 +338,7 @@ class ACMachineStator:
 
         height = self.slot_height + stamp_allowance
         width = self.slot_width + assembly_allowance
+
         return height, width
 
     def get_heat_load(self) -> float:
@@ -334,6 +353,18 @@ class ACMachineStator:
 
     # А вот то, что идёт дальше, предвещает расчёт магнитной цепи... Больше методов богу методов! Больше классов к трону
     # классов!
+
+    def get_armature_coefficient(self) -> float:
+        """
+        Метод, возвращающий обмоточный коэффициент статора.
+
+        :return: Обмоточный коэффициент.
+        """
+
+        coeff = math.sin(math.pi / 6) * math.sin(self.armature.shortening * math.pi / 2) /\
+            math.sin(math.pi / 6 / self.slots_per_pole_phase) / self.slots_per_pole_phase
+
+        return coeff
 
     def get_diameter_third(self) -> float:
         """
@@ -371,25 +402,6 @@ class ACMachineStator:
 
         return math.pi * self.get_diameter_bottom() / self.slot_count
 
-    def get_effective_length(self,
-                             fill_factor: float  # А может прикрутить значение по умолчанию?
-                             ) -> float:
-        """
-        Метод, возвращающий эффективную длину статора с учётом вентиляционных каналов и шунтов (суммарную длину чистой
-        стали).
-
-        :param fill_factor: Коэффициент заполнения статора сталью.
-        :return: Эффективная длина статора, мм.
-        """
-
-        length = self.length
-        if self.bypass_thickness is not None:
-            length -= 2 * self.bypass_thickness
-        if self.vent_channel_count is not None:
-            length -= self.vent_channel_width * self.vent_channel_count
-
-        return length * fill_factor
-
     def get_yoke_height(self) -> float:
         """
         Метод, возвращающий эффективную высоту ярма статора с учётом шпилек.
@@ -401,6 +413,10 @@ class ACMachineStator:
 
         if self.stud_diameter is not None:
             height -= self.stud_diameter / 3
+
+        if height <= 0:
+            raise ValueError("Отрицательная высота спинки статора")
+
         return height
 
     def get_yoke_section(self,
@@ -426,10 +442,10 @@ class ACMachineStator:
         :return: Суммарное сечение зубцов, м².
         """
 
-        if self.get_tooth_pitch_third() - self.slot_width <= 0:
+        if self.tooth_pitch - self.slot_width <= 0:
             raise ValueError("Отрицательная ширина зубца")
 
-        # 1e-6 нужно для перевода в м
+        # 1e-6 нужно для перевода в м²
         return 1.91 * effective_length * (self.get_tooth_pitch_third() - self.slot_width) * \
             self.slots_per_pole_phase * 1e-6
 
@@ -470,9 +486,8 @@ class ACMachineStator:
         """
 
         t13 = self.get_tooth_pitch_third()
-        b13 = t13 - self.slot_width
 
-        if b13 <= 0:
-            raise ValueError("Отрицательная ширина зубца")
+        return t13 * self.length / (t13 - self.slot_width) / effective_length - 1
 
-        return t13 * self.length / b13 / effective_length - 1
+
+__all__ = "ACMachineStator"
